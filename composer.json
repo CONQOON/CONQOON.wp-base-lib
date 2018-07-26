@@ -1,0 +1,25 @@
+{
+  "name": "CONQOON.wp-base-lib",
+  "type": "library",
+  "description": "CONQOON Wordpress Base Library",
+  "homepage": "https://github.com/CONQOON/CONQOON.wp-base-lib",
+  "authors": [
+    {
+      "name": "Benjamin Gröner",
+      "email": "bgroener@conqoon.com",
+      "homepage": "https://conqoon.com"
+    }
+  ],
+  "keywords": ["wordpress","base","templating","blade"],
+  "support": {
+  },
+  "autoload": {
+    "psr-4": {
+      "CQ\\WPBase\\": ""
+    }
+  },
+  "require": {
+    "php": ">=7.1.3",
+    "illuminate/view": "^5.6"
+  }
+}
