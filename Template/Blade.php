@@ -2,139 +2,111 @@
 
 namespace CQ\WPBase\Template;
 
-use Illuminate\Contracts\Container\Container as ContainerContract;
-use Illuminate\Contracts\View\Factory as FactoryContract;
-use Illuminate\View\Engines\CompilerEngine;
-use Illuminate\View\Engines\EngineInterface;
-use Illuminate\View\ViewFinderInterface;
+use Illuminate\Container\Container;
+use Illuminate\Contracts\Container\Container as ContainerInterface;
+use Illuminate\Events\Dispatcher;
+use Illuminate\Filesystem\Filesystem;
+use Illuminate\View\ViewServiceProvider;
 
-/**
- * Class BladeProvider
- *
- * @method bool exists(string $view) Determine if a given view exists.
- * @method mixed share(array|string $key, mixed $value = null)
- * @method array creator(array|string $views, \Closure|string $callback)
- * @method array composer(array|string $views, \Closure|string $callback)
- * @method \Illuminate\View\View file(string $file, array $data = [], array $mergeData = [])
- * @method \Illuminate\View\View make(string $file, array $data = [], array $mergeData = [])
- * @method \Illuminate\View\View addNamespace(string $namespace, string|array $hints)
- * @method \Illuminate\View\View replaceNamespace(string $namespace, string|array $hints)
- * @method \Illuminate\Contracts\Container\Container getContainer()
- */
 class Blade
 {
-    /** @var Factory */
-    protected $env;
+    /**
+     * Container instance.
+     *
+     * @var Container
+     */
+    protected $container;
+    /**
+     * Engine Resolver
+     *
+     * @var
+     */
+    protected $engineResolver;
 
-    public function __construct(FactoryContract $env)
+    /**
+     * Constructor.
+     *
+     * @param string|array $viewPaths
+     * @param string $cachePath
+     * @param ContainerInterface $container
+     */
+    public function __construct($viewPaths, $cachePath, ContainerInterface $container = null)
     {
-        $this->env = $env;
+        $this->viewPaths = $viewPaths;
+        $this->cachePath = $cachePath;
+        $this->container = $container ?: new Container;
+        $this->setupContainer();
+        (new ViewServiceProvider($this->container))->register();
+        $this->engineResolver = $this->container->make('view.engine.resolver');
+    }
+
+    /**
+     * Bind required instances for the service provider.
+     */
+    protected function setupContainer()
+    {
+        $this->container->bindIf(
+            'files',
+            function () {
+                return new Filesystem;
+            },
+            true
+        );
+        $this->container->bindIf(
+            'events',
+            function () {
+                return new Dispatcher;
+            },
+            true
+        );
+        $this->container->bindIf(
+            'config',
+            function () {
+                return [
+                    'view.paths'    => (array)$this->viewPaths,
+                    'view.compiled' => $this->cachePath,
+                ];
+            },
+            true
+        );
+    }
+
+    /**
+     * Render shortcut.
+     *
+     * @param  string $view
+     * @param  array $data
+     * @param  array $mergeData
+     *
+     * @return string
+     */
+    public function render($view, $data = [], $mergeData = [])
+    {
+        return $this->container['view']->make($view, $data, $mergeData)->render();
     }
 
     /**
      * Get the compiler
      *
-     * @return \Illuminate\View\Compilers\BladeCompiler
+     * @return mixed
      */
     public function compiler()
     {
-        static $engineResolver;
-        if (!$engineResolver) {
-            $engineResolver = $this->getContainer()->make('view.engine.resolver');
-        }
-        return $engineResolver->resolve('blade')->getCompiler();
+        $bladeEngine = $this->engineResolver->resolve('blade');
+
+        return $bladeEngine->getCompiler();
     }
 
     /**
-     * @param string $view
-     * @param array  $data
-     * @param array  $mergeData
-     * @return string
-     */
-    public function render($view, $data = [], $mergeData = [])
-    {
-        /** @var \Illuminate\Contracts\Filesystem\Filesystem $filesystem */
-        $filesystem = $this->getContainer()['files'];
-        return $this->{$filesystem->exists($view) ? 'file' : 'make'}($view, $data, $mergeData)->render();
-    }
-
-    /**
-     * @param string $file
-     * @param array  $data
-     * @param array  $mergeData
-     * @return string
-     */
-    public function compiledPath($file, $data = [], $mergeData = [])
-    {
-        $rendered = $this->file($file, $data, $mergeData);
-        /** @var EngineInterface $engine */
-        $engine = $rendered->getEngine();
-
-        if (!($engine instanceof CompilerEngine)) {
-            // Using PhpEngine, so just return the file
-            return $file;
-        }
-
-        $compiler = $engine->getCompiler();
-        $compiledPath = $compiler->getCompiledPath($rendered->getPath());
-        if ($compiler->isExpired($compiledPath)) {
-            $compiler->compile($file);
-        }
-        return $compiledPath;
-    }
-
-    /**
-     * @param string $file
-     * @return string
-     */
-    public function normalizeViewPath($file)
-    {
-        // Convert `\` to `/`
-        $view = str_replace('\\', '/', $file);
-
-        // Add namespace to path if necessary
-        $view = $this->applyNamespaceToPath($view);
-
-        // Remove unnecessary parts of the path
-        $view = str_replace(array_merge(
-            $this->getContainer()['config']['view.paths'],
-            ['.blade.php', '.php', '.css']
-        ), '', $view);
-
-        // Remove superfluous and leading slashes
-        return ltrim(preg_replace('%//+%', '/', $view), '/');
-    }
-
-    /**
-     * Convert path to view namespace
-     *
-     * @param string $path
-     * @return string
-     */
-    public function applyNamespaceToPath($path)
-    {
-        /** @var ViewFinderInterface $finder */
-        $finder = $this->getContainer()['view.finder'];
-        if (!method_exists($finder, 'getHints')) {
-            return $path;
-        }
-        $delimiter = $finder::HINT_PATH_DELIMITER;
-        $hints = $finder->getHints();
-        $view = array_reduce(array_keys($hints), function ($view, $namespace) use ($delimiter, $hints) {
-            return str_replace($hints[$namespace], $namespace.$delimiter, $view);
-        }, $path);
-        return preg_replace("%{$delimiter}[\\/]*%", $delimiter, $view);
-    }
-
-    /**
-     * Pass any method to the view Factory instance.
+     * Pass any method to the view factory instance.
      *
      * @param  string $method
-     * @param  array  $params
+     * @param  array $params
+     *
      * @return mixed
      */
     public function __call($method, $params)
     {
-        return call_user_func_array([$this->env, $method], $params);
+        return call_user_func_array([$this->container['view'], $method], $params);
     }
 }
